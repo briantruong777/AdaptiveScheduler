@@ -5,8 +5,8 @@ n = random.randint(5000, 10000)
 def bubblesort(A):
   for i in range(len(A)):
     for j in range(len(A)-1, i, -1):
-      if A[k] < A[k-1]:
-        A[k], A[k-1] = A[k-1], A[k]
+      if A[j] < A[j-1]:
+        A[j], A[j-1] = A[j-1], A[j]
   return A
   
 start = time.time()
