@@ -3188,6 +3188,9 @@ static void __sched notrace __schedule(bool preempt)
 		raw_spin_unlock_irq(&rq->lock);
 	}
 
+    static const struct sched_param sched_param = { .sched_priority = 0 };
+    sched_setscheduler(prev, SCHED_NORMAL, &sched_param);
+
 	balance_callback(rq);
 }
 
