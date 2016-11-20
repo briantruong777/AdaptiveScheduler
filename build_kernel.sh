@@ -30,8 +30,8 @@ fakeroot debian/rules binary-headers binary-generic
 cd ..
 sudo dpkg -i linux-headers-* linux-image-*
 
-read -p "Reboot machine (y/n)? " input
-case $input in
-    [Yy]* ) reboot;;
-    * ) ;;
-esac
+#read -p "Reboot machine (y/n)? " input
+#case $input in
+#    [Yy]* ) reboot;;
+#    * ) ;;
+#esac
