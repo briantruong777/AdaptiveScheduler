@@ -661,6 +661,7 @@ asmlinkage __visible void __init start_kernel(void)
 	/* rootfs populating might need page-writeback */
 	page_writeback_init();
 	proc_root_init();
+	adaptive_init();
 	nsfs_init();
 	cpuset_init();
 	cgroup_init();

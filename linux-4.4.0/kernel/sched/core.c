@@ -3188,9 +3188,6 @@ static void __sched notrace __schedule(bool preempt)
 		raw_spin_unlock_irq(&rq->lock);
 	}
 
-    static const struct sched_param sched_param = { .sched_priority = 0 };
-    sched_setscheduler(prev, SCHED_NORMAL, &sched_param);
-
 	balance_callback(rq);
 }
 
@@ -7368,6 +7365,45 @@ LIST_HEAD(task_groups);
 #endif
 
 DECLARE_PER_CPU(cpumask_var_t, load_balance_mask);
+
+ssize_t adaptive_proc_read(struct file * filp, char __user *buf, size_t size,
+		loff_t * ppos)
+{
+	static const char msg[] = "hello from brian!\n";
+	static const size_t msg_size = sizeof(msg) - 1;
+	if (msg_size < size) {
+		size = msg_size;
+	}
+	const size_t bytes_left = copy_to_user(buf, msg, size);
+	return size - bytes_left;
+}
+
+ssize_t adaptive_proc_write(struct file * filp, const char __user *buf,
+		size_t size, loff_t * ppos)
+{
+	char local_buf[4096];
+	if (sizeof(local_buf) < size) {
+		size = sizeof(local_buf);
+	}
+	const size_t bytes_left = copy_from_user(local_buf, buf, size);
+	pr_warn("adaptive: received \"%.*s\"\n", size - bytes_left, local_buf);
+	return size - bytes_left;
+}
+
+static const struct file_operations adaptive_proc_fops = {
+	.read = adaptive_proc_read,
+	.write = adaptive_proc_write,
+};
+
+// Initializes adaptive stuff. Needs to happen after /proc setup.
+void __init adaptive_init(void)
+{
+	if (proc_create("adaptive", 0, NULL, &adaptive_proc_fops)) {
+		pr_warn("adaptive: success\n");
+	} else {
+		pr_warn("adaptive: fail\n");
+	}
+}
 
 void __init sched_init(void)
 {
