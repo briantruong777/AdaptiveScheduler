@@ -1,14 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-//#include <time.h>
+#include <time.h>
+#include <sys/wait.h>
 
-// seed
-//srand(100);
+long get_nanos(void) {
+    struct timespec ts;
+    timespec_get(&ts, TIME_UTC);
+    return ts.tv_nsec;	
+}
 
-int fibonacci(int i) {
-    int t1 = 0, t2 = 1, nextTerm = 0, c = 3;
-    int n = (rand() % 10000) + 5000; // random int between 5000-15000
+int fibonacci(int i, int n) {
+    unsigned long long t1 = 0, t2 = 1, nextTerm = 0;
+    int c = 3; // random int between 5-105
     nextTerm = t1 + t2; // displays the first two terms which is always 0 and 1
 
     while (c++ < n) {
@@ -16,16 +20,15 @@ int fibonacci(int i) {
         t2 = nextTerm;
         nextTerm = t1 + t2;
     }
-    printf("process %d: fibo %d finished with result %d\n", getpid(), i, nextTerm);
+    printf("process %d: fibo %d finished with result %llu\n", getpid(), i, nextTerm);
     return nextTerm;
 }
 
-void bubblesort(int i) {
-    int n = 10000;
+void bubblesort(int i, int n) {
     int array[n], c, d, swap;
 
     for (int i = 0; i < n; i++) {
-        array[i] = (rand() % n) + 5000; // initialize
+        array[i] = (rand() % n); // initialize
     }
 
     for (c = 0; c < (n - 1); c++) {
@@ -37,13 +40,12 @@ void bubblesort(int i) {
             }
         }
     }
-    printf("process %d: bub %d finished\n", getpid(), i);
+
+    printf("process %d: bub %d finished sorting %d elements\n", getpid(), i, n);
 }
 
 int main(int argc, char *argv[]) {
-    // Generate array 90% fib, 10% bub sort
-    // Launch fork() on array
-    int numProcesses = 10;
+    int numProcesses = atoi(argv[1]);
     int processTypes[numProcesses];
     for (int i = 0; i < numProcesses; i++) {
         processTypes[i] = (rand() % 10 < 1 ? 1 : 0); // 10% CPU-intensive
@@ -55,13 +57,14 @@ int main(int argc, char *argv[]) {
             perror("Error fork()ing!");
             abort();
         } else if (pid == 0) { // in child process
-            processTypes[i] == 0 ? fibonacci(i) : bubblesort(i);
+	    srand(get_nanos());
+            processTypes[i] == 0 ? fibonacci(i, (rand() % 100 + 5)) : bubblesort(i, (rand() % 5000 + 10000));
             exit(0); // important line, exiting child process
         } else {
             wait(NULL);
         }
     }
 
-    printf("parent process finished\n");
+    printf("parent %d process finished\n", getpid());
     return 0;
 }
