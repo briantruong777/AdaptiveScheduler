@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <sched.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <time.h>
@@ -58,6 +59,11 @@ int main(int argc, char *argv[]) {
             abort();
         } else if (pid == 0) { // in child process
 	    srand(get_nanos());
+	    
+	    // set policy for process
+	    struct sched_param param;
+  	    sched_setscheduler(0, SCHED_NORMAL, &param);
+
             processTypes[i] == 0 ? fibonacci(i, (rand() % 100 + 5)) : bubblesort(i, (rand() % 5000 + 10000));
             exit(0); // important line, exiting child process
         } else {
