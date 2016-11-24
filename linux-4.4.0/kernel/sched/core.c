@@ -74,6 +74,8 @@
 #include <linux/binfmts.h>
 #include <linux/context_tracking.h>
 #include <linux/compiler.h>
+#include <linux/kernel.h>
+#include <linux/hashtable.h>
 
 #include <asm/switch_to.h>
 #include <asm/tlb.h>
@@ -7366,28 +7368,133 @@ LIST_HEAD(task_groups);
 
 DECLARE_PER_CPU(cpumask_var_t, load_balance_mask);
 
-ssize_t adaptive_proc_read(struct file * filp, char __user *buf, size_t size,
-		loff_t * ppos)
+static DEFINE_HASHTABLE(adaptive_processes, 16);
+
+struct adaptive_process {
+	pid_t pid;
+	struct hlist_node hash_node;
+};
+
+ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
+			   size_t size, loff_t *ppos)
 {
-	static const char msg[] = "hello from brian!\n";
-	static const size_t msg_size = sizeof(msg) - 1;
-	if (msg_size < size) {
-		size = msg_size;
+	static const char *const no_space_str = "%d", *space_str = " %d";
+	const char *format_str;
+	char buf[256];
+	int bkt, buf_len;
+	struct adaptive_process *adpt_proc;
+	bool first;
+	size_t size_left, user_bytes_left;
+
+	pr_warn("adaptive proc: received read()\n");
+
+	if (hash_empty(adaptive_processes) || *ppos) {
+		pr_warn("adaptive proc: finished read()\n");
+		return 0;
 	}
-	const size_t bytes_left = copy_to_user(buf, msg, size);
-	return size - bytes_left;
+
+	first = true;
+	size_left = size;
+	hash_for_each(adaptive_processes, bkt, adpt_proc, hash_node) {
+		format_str = space_str;
+		if (first) {
+			format_str = no_space_str;
+			first = false;
+		}
+		buf_len =
+		    scnprintf(buf, sizeof(buf), format_str, adpt_proc->pid);
+		if (buf_len > size_left) {
+			pr_warn("adaptive proc: user read() does not have enough space\n");
+			return *ppos = size - size_left;
+		}
+		user_bytes_left = copy_to_user(user_buf, buf, buf_len);
+		if (user_bytes_left) {
+			pr_warn("adaptive proc: copy_to_user failed\n");
+			return *ppos = size - size_left +
+				       (buf_len - user_bytes_left);
+		}
+		user_buf += buf_len;
+		size_left -= buf_len;
+	}
+	if (copy_to_user(user_buf, "\n", 1)) {
+		pr_warn("adaptive proc: copy_to_user failed\n");
+		return *ppos = size - size_left;
+	}
+	return *ppos = size - size_left + 1;
 }
 
-ssize_t adaptive_proc_write(struct file * filp, const char __user *buf,
-		size_t size, loff_t * ppos)
+ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
+			    size_t size, loff_t *ppos)
 {
-	char local_buf[4096];
-	if (sizeof(local_buf) < size) {
-		size = sizeof(local_buf);
+	char local_buf[4096] = {0};
+	size_t bytes_left, bytes_read;
+	int pid, err;
+	struct adaptive_process *adpt_proc;
+
+	if (sizeof(local_buf) - 1 < size) {
+		size = sizeof(local_buf) - 1;
 	}
-	const size_t bytes_left = copy_from_user(local_buf, buf, size);
-	pr_warn("adaptive: received \"%.*s\"\n", size - bytes_left, local_buf);
-	return size - bytes_left;
+	bytes_left = copy_from_user(local_buf, buf, size);
+	bytes_read = size - bytes_left;
+	pr_warn("adaptive proc: received \"%.*s\"\n", (int)bytes_read,
+		local_buf);
+
+	if (bytes_read == 0)
+		return 0;
+
+	switch (local_buf[0]) {
+	// Register process
+	// format: 'r:<pid>'
+	case 'r': {
+		pid = -1;
+		if (err = kstrtoint(local_buf + 2, 10, &pid)) {
+			pr_warn("adaptive proc: unable to parse pid, kstrtoint() == %d\n", err);
+			return bytes_read;
+		}
+		hash_for_each_possible(adaptive_processes, adpt_proc, hash_node, pid) {
+			if (adpt_proc->pid == pid) {
+				pr_warn("adaptive proc: pid %d already registered\n", pid);
+				return bytes_read;
+			}
+		}
+		adpt_proc = kmalloc(sizeof(*adpt_proc), GFP_KERNEL);
+		if (!adpt_proc) {
+			pr_warn("adaptive proc: unable to kmalloc\n");
+			return bytes_read;
+		}
+		adpt_proc->pid = pid;
+		hash_add(adaptive_processes, &adpt_proc->hash_node, pid);
+		pr_warn("adaptive proc: stored process %d\n", pid);
+		break;
+	}
+	// Unregister process
+	// format: `u:<pid>
+	case 'u': {
+		pid = -1;
+		if (err = kstrtoint(local_buf + 2, 10, &pid)) {
+			pr_warn("adaptive proc: unable to parse pid, kstrtoint() == %d\n", err);
+			return bytes_read;
+		}
+		adpt_proc = NULL;
+		hash_for_each_possible(adaptive_processes, adpt_proc, hash_node, pid) {
+			if (adpt_proc->pid == pid)
+				break;
+		}
+		if (!adpt_proc || adpt_proc->pid != pid) {
+			pr_warn("adaptive proc: unable to find pid %d\n", pid);
+			return bytes_read;
+		}
+		hash_del(&adpt_proc->hash_node);
+		kfree(adpt_proc);
+		pr_warn("adaptive proc: removed process %d\n", adpt_proc->pid);
+		break;
+	}
+	default:
+		pr_warn("adaptive proc: unrecognized command\n");
+		break;
+	}
+
+	return bytes_read;
 }
 
 static const struct file_operations adaptive_proc_fops = {
@@ -7399,9 +7506,9 @@ static const struct file_operations adaptive_proc_fops = {
 void __init adaptive_init(void)
 {
 	if (proc_create("adaptive", 0, NULL, &adaptive_proc_fops)) {
-		pr_warn("adaptive: success\n");
+		pr_warn("adaptive proc: create success\n");
 	} else {
-		pr_warn("adaptive: fail\n");
+		pr_warn("adaptive proc: create fail\n");
 	}
 }
 
