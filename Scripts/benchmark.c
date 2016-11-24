@@ -4,6 +4,8 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/wait.h>
+#include <linux/sched.h>
+#include <string.h>
 
 long get_nanos(void) {
     struct timespec ts;
@@ -12,16 +14,19 @@ long get_nanos(void) {
 }
 
 int fibonacci(int i, int n) {
-    unsigned long long t1 = 0, t2 = 1, nextTerm = 0;
-    int c = 3; // random int between 5-105
-    nextTerm = t1 + t2; // displays the first two terms which is always 0 and 1
+    unsigned long long nextTerm = 0;
+    for (int j = 0; j < 50000; j++) {
+    	unsigned long long t1 = 0, t2 = 1;
+    	int c = 3;
+     	nextTerm = t1 + t2;
 
-    while (c++ < n) {
-        t1 = t2;
-        t2 = nextTerm;
-        nextTerm = t1 + t2;
+    	while (c++ < n) {
+            t1 = t2;
+            t2 = nextTerm;
+            nextTerm = t1 + t2;
+    	}
     }
-    printf("process %d: fibo %d finished with result %llu\n", getpid(), i, nextTerm);
+    //printf("process %d: fibo %d (policy %d) finished with result %llu\n", getpid(), i, sched_getscheduler(0), nextTerm);
     return nextTerm;
 }
 
@@ -42,15 +47,11 @@ void bubblesort(int i, int n) {
         }
     }
 
-    printf("process %d: bub %d finished sorting %d elements\n", getpid(), i, n);
+    //printf("process %d: bub %d (policy %d) finished sorting %d elements\n", getpid(), i, sched_getscheduler(0), n);
 }
 
 int main(int argc, char *argv[]) {
     int numProcesses = atoi(argv[1]);
-    int processTypes[numProcesses];
-    for (int i = 0; i < numProcesses; i++) {
-        processTypes[i] = (rand() % 10 < 1 ? 1 : 0); // 10% CPU-intensive
-    }
 
     pid_t pid;
     for (int i = 0; i < numProcesses; i++) {
@@ -62,15 +63,35 @@ int main(int argc, char *argv[]) {
 	    
 	    // set policy for process
 	    struct sched_param param;
-  	    sched_setscheduler(0, SCHED_NORMAL, &param);
+	    param.sched_priority = 0;
+  	    sched_setscheduler(0, SCHED_BATCH, &param);
 
-            processTypes[i] == 0 ? fibonacci(i, (rand() % 100 + 5)) : bubblesort(i, (rand() % 5000 + 10000));
+	    if (rand() % 100 > atoi(argv[2])) {
+            	fibonacci(i, (rand() % 50 + 75)); //75-125
+	    } else {
+		bubblesort(i, (rand() % 10000 + 25000)); //25000-35000
+	    }
+
+            char path[50];
+            sprintf(path, "/proc/%d/schedstat", getpid());
+            FILE* fp = fopen(path, "r");
+	    char buff[255];
+	    fgets(buff, 255, (FILE*)fp);
+	    fclose(fp);
+	    printf("%d %s", getpid(), buff);
+
             exit(0); // important line, exiting child process
         } else {
-            wait(NULL);
+            ;
         }
     }
 
-    printf("parent %d process finished\n", getpid());
+    for (int i = 0; i < numProcesses; i++) {
+	int status = 0;
+	pid_t child_pid = wait(&status);
+	//printf("Child %d finished.\n", (int)child_pid);
+    }
+
+    //printf("parent %d process finished\n", getpid());
     return 0;
 }
