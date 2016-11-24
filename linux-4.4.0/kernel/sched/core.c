@@ -7387,6 +7387,12 @@ ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
 	size_t size_left, user_bytes_left;
 
 	pr_warn("adaptive proc: received read()\n");
+
+	if (hash_empty(adaptive_processes) || *ppos) {
+		pr_warn("adaptive proc: finished read()\n");
+		return 0;
+	}
+
 	first = true;
 	size_left = size;
 	hash_for_each(adaptive_processes, bkt, adpt_proc, hash_node) {
@@ -7399,17 +7405,22 @@ ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
 		    scnprintf(buf, sizeof(buf), format_str, adpt_proc->pid);
 		if (buf_len > size_left) {
 			pr_warn("adaptive proc: user read() does not have enough space\n");
-			return size - size_left;
+			return *ppos = size - size_left;
 		}
 		user_bytes_left = copy_to_user(user_buf, buf, buf_len);
 		if (user_bytes_left) {
 			pr_warn("adaptive proc: copy_to_user failed\n");
-			return size - size_left + (buf_len - user_bytes_left);
+			return *ppos = size - size_left +
+				       (buf_len - user_bytes_left);
 		}
 		user_buf += buf_len;
 		size_left -= buf_len;
 	}
-	return size - size_left;
+	if (copy_to_user(user_buf, "\n", 1)) {
+		pr_warn("adaptive proc: copy_to_user failed\n");
+		return *ppos = size - size_left;
+	}
+	return *ppos = size - size_left + 1;
 }
 
 ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
@@ -7417,7 +7428,7 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 {
 	char local_buf[4096] = {0};
 	size_t bytes_left, bytes_read;
-	int pid;
+	int pid, err;
 	struct adaptive_process *adpt_proc;
 
 	if (sizeof(local_buf) - 1 < size) {
@@ -7436,9 +7447,15 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 	// format: 'r:<pid>'
 	case 'r': {
 		pid = -1;
-		if (!kstrtoint(local_buf + 2, 10, &pid)) {
-			pr_warn("adaptive proc: unable to parse pid\n");
+		if (err = kstrtoint(local_buf + 2, 10, &pid)) {
+			pr_warn("adaptive proc: unable to parse pid, kstrtoint() == %d\n", err);
 			return bytes_read;
+		}
+		hash_for_each_possible(adaptive_processes, adpt_proc, hash_node, pid) {
+			if (adpt_proc->pid == pid) {
+				pr_warn("adaptive proc: pid %d already registered\n", pid);
+				return bytes_read;
+			}
 		}
 		adpt_proc = kmalloc(sizeof(*adpt_proc), GFP_KERNEL);
 		if (!adpt_proc) {
@@ -7454,8 +7471,8 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 	// format: `u:<pid>
 	case 'u': {
 		pid = -1;
-		if (!kstrtoint(local_buf + 2, 10, &pid)) {
-			pr_warn("adaptive proc: unable to parse pid\n");
+		if (err = kstrtoint(local_buf + 2, 10, &pid)) {
+			pr_warn("adaptive proc: unable to parse pid, kstrtoint() == %d\n", err);
 			return bytes_read;
 		}
 		adpt_proc = NULL;
@@ -7468,9 +7485,13 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 			return bytes_read;
 		}
 		hash_del(&adpt_proc->hash_node);
+		kfree(adpt_proc);
 		pr_warn("adaptive proc: removed process %d\n", adpt_proc->pid);
 		break;
 	}
+	default:
+		pr_warn("adaptive proc: unrecognized command\n");
+		break;
 	}
 
 	return bytes_read;
