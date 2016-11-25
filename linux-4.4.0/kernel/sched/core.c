@@ -7493,8 +7493,8 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 			return bytes_read;
 		}
 		hash_del(&adpt_proc->hash_node);
-		kfree(adpt_proc);
 		pr_warn("adaptive proc: removed process %d\n", adpt_proc->pid);
+		kfree(adpt_proc);
 		break;
 	}
 	default:
