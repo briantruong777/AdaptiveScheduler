@@ -7378,13 +7378,13 @@ struct adaptive_process {
 ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
 			   size_t size, loff_t *ppos)
 {
-	static const char *const no_space_str = "%d", *space_str = " %d";
-	const char *format_str;
 	char buf[256];
 	int bkt, buf_len;
 	struct adaptive_process *adpt_proc;
-	bool first;
 	size_t size_left, user_bytes_left;
+	struct task_struct *task;
+	unsigned long nvcsw, nivcsw;
+	u64 start_time, real_start_time;
 
 	pr_warn("adaptive proc: received read()\n");
 
@@ -7393,16 +7393,28 @@ ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
 		return 0;
 	}
 
-	first = true;
 	size_left = size;
 	hash_for_each(adaptive_processes, bkt, adpt_proc, hash_node) {
-		format_str = space_str;
-		if (first) {
-			format_str = no_space_str;
-			first = false;
+		// Get stats about pid
+		rcu_read_lock();
+		task = find_process_by_pid(adpt_proc->pid);
+		if (task) {
+			nvcsw = task->nvcsw;
+			nivcsw = task->nivcsw;
+			start_time = task->start_time;
+			real_start_time = task->real_start_time;
+		} else {
+			nvcsw = 0;
+			nivcsw = 0;
+			start_time = 0;
+			real_start_time = 0;
 		}
-		buf_len =
-		    scnprintf(buf, sizeof(buf), format_str, adpt_proc->pid);
+		rcu_read_unlock();
+
+		buf_len = scnprintf(
+		    buf, sizeof(buf),
+		    "%d nvcsw:%lu nivcsw:%lu strt_tm:%llu rl_strt_tm:%llu\n",
+		    adpt_proc->pid, nvcsw, nivcsw, start_time, real_start_time);
 		if (buf_len > size_left) {
 			pr_warn("adaptive proc: user read() does not have enough space\n");
 			return *ppos = size - size_left;
@@ -7416,11 +7428,7 @@ ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
 		user_buf += buf_len;
 		size_left -= buf_len;
 	}
-	if (copy_to_user(user_buf, "\n", 1)) {
-		pr_warn("adaptive proc: copy_to_user failed\n");
-		return *ppos = size - size_left;
-	}
-	return *ppos = size - size_left + 1;
+	return *ppos = size - size_left;
 }
 
 ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
@@ -7447,7 +7455,7 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 	// format: 'r:<pid>'
 	case 'r': {
 		pid = -1;
-		if (err = kstrtoint(local_buf + 2, 10, &pid)) {
+		if ((err = kstrtoint(local_buf + 2, 10, &pid))) {
 			pr_warn("adaptive proc: unable to parse pid, kstrtoint() == %d\n", err);
 			return bytes_read;
 		}
@@ -7471,7 +7479,7 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 	// format: `u:<pid>
 	case 'u': {
 		pid = -1;
-		if (err = kstrtoint(local_buf + 2, 10, &pid)) {
+		if ((err = kstrtoint(local_buf + 2, 10, &pid))) {
 			pr_warn("adaptive proc: unable to parse pid, kstrtoint() == %d\n", err);
 			return bytes_read;
 		}
