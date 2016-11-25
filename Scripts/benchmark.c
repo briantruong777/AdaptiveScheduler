@@ -91,7 +91,7 @@ int main(int argc, char *argv[]) {
 	    // set policy for process
 	    struct sched_param param;
 	    param.sched_priority = 0;
-  	    sched_setscheduler(0, SCHED_NORMAL, &param);
+  	    sched_setscheduler(0, SCHED_FIFO, &param);
 
 	    if (rand() % 100 >= atoi(argv[2])) {
             	fibonacci(i, (rand() % 50 + 100)); //100-150
