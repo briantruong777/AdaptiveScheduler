@@ -35,7 +35,7 @@ void print_sched() {
 	}
     }
     out[strlen(out)-2] = '\0';
-    printf("%d: %s\n", getpid(), out); 
+    printf("%d (policy %d): %s\n", getpid(), sched_getscheduler(0), out); 
     fclose(fp);
     return;
 }
@@ -90,13 +90,17 @@ int main(int argc, char *argv[]) {
 	    
 	    // set policy for process
 	    struct sched_param param;
-	    param.sched_priority = 0;
-  	    sched_setscheduler(0, SCHED_FIFO, &param);
+	    //param.sched_priority = 0;
+  	    //sched_setscheduler(0, SCHED_NORMAL, &param);
 
 	    if (rand() % 100 >= atoi(argv[2])) {
+		param.sched_priority = 50;
+		sched_setscheduler(0, SCHED_RR, &param);
             	fibonacci(i, (rand() % 50 + 100)); //100-150
 	    } else {
-		bubblesort(i, (rand() % 10000 + 25000)); //25000-35000
+		param.sched_priority = 0;
+		sched_setscheduler(0, SCHED_BATCH, &param);
+		bubblesort(i, (rand() % 10000 + 5000)); //25000-35000
 	    }
 
 	    /*
