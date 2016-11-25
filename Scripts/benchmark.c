@@ -13,6 +13,33 @@ long get_nanos(void) {
     return ts.tv_nsec;	
 }
 
+void print_sched() {
+    char path[50], buff[255], out[255] ="";
+    const char s[2] = " ";
+    sprintf(path, "/proc/%d/sched", getpid());
+    FILE* fp = fopen(path, "r");
+    
+    while (fgets(buff, 255, (FILE*)fp) != NULL) {
+	char* token = strtok(buff, s);
+	
+	if (strcmp(token, "se.sum_exec_runtime") == 0 ||
+	    strcmp(token, "se.statistics.wait_sum") == 0 ||
+	    strcmp(token, "nr_switches") == 0 ||
+	    strcmp(token, "nr_voluntary_switches") == 0 ||
+	    strcmp(token, "nr_involuntary_switches") == 0) {
+	    token = strtok(NULL, s); // skip the ":"
+	    token = strtok(NULL, s);
+	    token[strcspn(token, "\n")] = 0; // remove new line
+	    strcat(token, ", ");
+	    strcat(out, token); 
+	}
+    }
+    out[strlen(out)-2] = '\0';
+    printf("%d: %s\n", getpid(), out); 
+    fclose(fp);
+    return;
+}
+
 int fibonacci(int i, int n) {
     unsigned long long nextTerm = 0;
     for (int j = 0; j < 50000; j++) {
@@ -64,14 +91,15 @@ int main(int argc, char *argv[]) {
 	    // set policy for process
 	    struct sched_param param;
 	    param.sched_priority = 0;
-  	    sched_setscheduler(0, SCHED_BATCH, &param);
+  	    sched_setscheduler(0, SCHED_NORMAL, &param);
 
-	    if (rand() % 100 > atoi(argv[2])) {
-            	fibonacci(i, (rand() % 50 + 75)); //75-125
+	    if (rand() % 100 >= atoi(argv[2])) {
+            	fibonacci(i, (rand() % 50 + 100)); //100-150
 	    } else {
 		bubblesort(i, (rand() % 10000 + 25000)); //25000-35000
 	    }
 
+	    /*
             char path[50];
             sprintf(path, "/proc/%d/schedstat", getpid());
             FILE* fp = fopen(path, "r");
@@ -79,7 +107,8 @@ int main(int argc, char *argv[]) {
 	    fgets(buff, 255, (FILE*)fp);
 	    fclose(fp);
 	    printf("%d %s", getpid(), buff);
-
+	    */
+	    print_sched();
             exit(0); // important line, exiting child process
         } else {
             ;
