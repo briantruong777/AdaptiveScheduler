@@ -3067,6 +3067,14 @@ again:
 	BUG(); /* the idle class will always have a runnable task */
 }
 
+static DEFINE_HASHTABLE(adaptive_processes, 16);
+
+struct adaptive_process {
+	pid_t pid;
+	struct hlist_node hash_node;
+};
+
+
 /*
  * __schedule() is the main scheduler function.
  *
@@ -3108,10 +3116,12 @@ again:
  */
 static void __sched notrace __schedule(bool preempt)
 {
+	static const struct sched_param sched_param = {.sched_priority = 0};
 	struct task_struct *prev, *next;
 	unsigned long *switch_count;
 	struct rq *rq;
-	int cpu;
+	int cpu, err;
+	struct adaptive_process *adpt_proc;
 
 	cpu = smp_processor_id();
 	rq = cpu_rq(cpu);
@@ -3191,6 +3201,18 @@ static void __sched notrace __schedule(bool preempt)
 	}
 
 	balance_callback(rq);
+
+	// Dynamic scheduler changing
+	rcu_read_lock();
+	hash_for_each_possible(adaptive_processes, adpt_proc, hash_node, next->pid) {
+		if (adpt_proc->pid == next->pid) {
+			if ((err = sched_setscheduler(prev, SCHED_BATCH, &sched_param))) {
+				pr_warn("adaptive: sched_setscheduler failed, err %d\n", err);
+			}
+			break;
+		}
+	}
+	rcu_read_unlock();
 }
 
 static inline void sched_submit_work(struct task_struct *tsk)
@@ -7367,13 +7389,6 @@ LIST_HEAD(task_groups);
 #endif
 
 DECLARE_PER_CPU(cpumask_var_t, load_balance_mask);
-
-static DEFINE_HASHTABLE(adaptive_processes, 16);
-
-struct adaptive_process {
-	pid_t pid;
-	struct hlist_node hash_node;
-};
 
 ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
 			   size_t size, loff_t *ppos)
