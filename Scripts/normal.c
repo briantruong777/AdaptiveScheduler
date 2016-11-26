@@ -35,7 +35,7 @@ void print_sched() {
 	}
     }
     out[strlen(out)-2] = '\0';
-    printf("%d (policy %d): %s\n", getpid(), sched_getscheduler(0), out); 
+    printf("%d, %d, %s\n", getpid(), sched_getscheduler(0), out); 
     fclose(fp);
     return;
 }
@@ -53,7 +53,7 @@ int fibonacci(int i, int n) {
             nextTerm = t1 + t2;
     	}
     }
-    //printf("process %d: fibo %d (policy %d) finished with result %llu\n", getpid(), i, sched_getscheduler(0), nextTerm);
+    
     return nextTerm;
 }
 
@@ -74,7 +74,6 @@ void bubblesort(int i, int n) {
         }
     }
 
-    //printf("process %d: bub %d (policy %d) finished sorting %d elements\n", getpid(), i, sched_getscheduler(0), n);
 }
 
 int main(int argc, char *argv[]) {
@@ -90,28 +89,15 @@ int main(int argc, char *argv[]) {
 	    
 	    // set policy for process
 	    struct sched_param param;
-	    //param.sched_priority = 0;
-  	    //sched_setscheduler(0, SCHED_NORMAL, &param);
+	    param.sched_priority = 0;
+  	    sched_setscheduler(0, SCHED_NORMAL, &param);
 
 	    if (rand() % 100 >= atoi(argv[2])) {
-		param.sched_priority = 50;
-		sched_setscheduler(0, SCHED_RR, &param);
             	fibonacci(i, (rand() % 50 + 100)); //100-150
 	    } else {
-		param.sched_priority = 0;
-		sched_setscheduler(0, SCHED_BATCH, &param);
 		bubblesort(i, (rand() % 10000 + 5000)); //25000-35000
 	    }
 
-	    /*
-            char path[50];
-            sprintf(path, "/proc/%d/schedstat", getpid());
-            FILE* fp = fopen(path, "r");
-	    char buff[255];
-	    fgets(buff, 255, (FILE*)fp);
-	    fclose(fp);
-	    printf("%d %s", getpid(), buff);
-	    */
 	    print_sched();
             exit(0); // important line, exiting child process
         } else {
@@ -122,9 +108,7 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < numProcesses; i++) {
 	int status = 0;
 	pid_t child_pid = wait(&status);
-	//printf("Child %d finished.\n", (int)child_pid);
     }
 
-    //printf("parent %d process finished\n", getpid());
     return 0;
 }
