@@ -3206,7 +3206,7 @@ static void __sched notrace __schedule(bool preempt)
 	rcu_read_lock();
 	hash_for_each_possible(adaptive_processes, adpt_proc, hash_node, next->pid) {
 		if (adpt_proc->pid == next->pid) {
-			if ((err = sched_setscheduler(prev, SCHED_BATCH, &sched_param))) {
+			if ((err = sched_setscheduler(next, SCHED_BATCH, &sched_param))) {
 				pr_warn("adaptive: sched_setscheduler failed, err %d\n", err);
 			}
 			break;
