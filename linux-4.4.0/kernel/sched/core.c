@@ -3067,11 +3067,22 @@ again:
 	BUG(); /* the idle class will always have a runnable task */
 }
 
+// Stores curent processes uneder adaptive scheduler control
 static DEFINE_HASHTABLE(adaptive_processes, 16);
+// Stores stats for processes that were previously under adaptive scheduler
+// control
+static DEFINE_HASHTABLE(adaptive_processes_stats, 16);
 
 struct adaptive_process {
+	// Key for adaptive_processes hash table. Useless when inside adaptive_processes_stats
 	pid_t pid;
+	// Key for adaptive_processes_stats
+	int exec_name_hash;
+	char exec_name[TASK_COMM_LEN];
 	struct hlist_node hash_node;
+
+	cputime_t last_utime;
+	cputime_t last_stime;
 };
 
 
@@ -7390,6 +7401,16 @@ LIST_HEAD(task_groups);
 
 DECLARE_PER_CPU(cpumask_var_t, load_balance_mask);
 
+// Hash the name of an executable.
+// Uses the djb2 algorithm from www.cse.yorku.ca/~oz/hash.html.
+static int hash_exec_name(const char *exec_name) {
+	unsigned long hash = 5381;
+	int c, iters = TASK_COMM_LEN;
+	while ((c = *exec_name++) && iters--)
+		hash = hash * 33 ^ c;
+	return hash;
+}
+
 ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
 			   size_t size, loff_t *ppos)
 {
@@ -7451,8 +7472,10 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 {
 	char local_buf[4096] = {0};
 	size_t bytes_left, bytes_read;
-	int pid, err;
-	struct adaptive_process *adpt_proc;
+	int pid, err, exec_name_hash;
+	struct adaptive_process *adpt_proc, *old_adpt_proc;
+	struct task_struct *task;
+	cputime_t last_utime, last_stime;
 
 	if (sizeof(local_buf) - 1 < size) {
 		size = sizeof(local_buf) - 1;
@@ -7509,7 +7532,48 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 		}
 		hash_del(&adpt_proc->hash_node);
 		pr_warn("adaptive proc: removed process %d\n", adpt_proc->pid);
-		kfree(adpt_proc);
+
+		// Get process stats
+		rcu_read_lock();
+		task = find_process_by_pid(adpt_proc->pid);
+		if (!task) {
+			pr_warn("adaptive proc: couldn't find task_struct for pid %d\n", adpt_proc->pid);
+			kfree(adpt_proc);
+			rcu_read_unlock();
+			return bytes_read;
+		}
+		last_utime = task->utime;
+		last_stime = task->stime;
+		get_task_comm(local_buf, task);
+		rcu_read_unlock();
+
+		// Check if already stored stats before
+		old_adpt_proc = adpt_proc;
+		exec_name_hash = hash_exec_name(local_buf);
+		adpt_proc = NULL;
+		hash_for_each_possible(adaptive_processes_stats, adpt_proc, hash_node, exec_name_hash) {
+			if (adpt_proc->exec_name_hash == exec_name_hash) {
+				break;
+			}
+		}
+		// If found stored stats
+		if (adpt_proc && adpt_proc->exec_name_hash == exec_name_hash) {
+			// Don't need this anymore, just use the already
+			// existing stats one
+			kfree(old_adpt_proc);
+			old_adpt_proc = NULL;
+		} else {
+			adpt_proc = old_adpt_proc;
+
+			adpt_proc->pid = -1;
+			adpt_proc->exec_name_hash = exec_name_hash;
+			strncpy(adpt_proc->exec_name, local_buf, sizeof(adpt_proc->exec_name));
+			hash_add(adaptive_processes_stats, &adpt_proc->hash_node, exec_name_hash);
+		}
+		// TODO Do fancier calculations here
+		adpt_proc->last_utime = last_utime;
+		adpt_proc->last_stime = last_stime;
+
 		break;
 	}
 	default:
