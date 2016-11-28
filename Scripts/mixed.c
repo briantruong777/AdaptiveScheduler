@@ -13,7 +13,7 @@ long get_nanos(void) {
     return ts.tv_nsec;	
 }
 
-void print_sched() {
+void print_sched(int i) {
     char path[50], buff[255], out[255] ="";
     const char s[2] = " ";
     sprintf(path, "/proc/%d/sched", getpid());
@@ -24,9 +24,7 @@ void print_sched() {
 	
 	if (strcmp(token, "se.sum_exec_runtime") == 0 ||
 	    strcmp(token, "se.statistics.wait_sum") == 0 ||
-	    strcmp(token, "nr_switches") == 0 ||
-	    strcmp(token, "nr_voluntary_switches") == 0 ||
-	    strcmp(token, "nr_involuntary_switches") == 0) {
+	    strcmp(token, "nr_switches") == 0) {
 	    token = strtok(NULL, s); // skip the ":"
 	    token = strtok(NULL, s);
 	    token[strcspn(token, "\n")] = 0; // remove new line
@@ -35,7 +33,7 @@ void print_sched() {
 	}
     }
     out[strlen(out)-2] = '\0';
-    printf("%d, %d, %s\n", getpid(), sched_getscheduler(0), out); 
+    printf("%d, %d, %d, %s\n", i, getpid(), sched_getscheduler(0), out); 
     fclose(fp);
     return;
 }
@@ -96,10 +94,10 @@ int main(int argc, char *argv[]) {
 	    } else {
 		param.sched_priority = 0;
 		sched_setscheduler(0, SCHED_BATCH, &param);
-		bubblesort(i, (rand() % 10000 + 5000)); //25000-35000
+		bubblesort(i, (rand() % 5000 + 10000)); //10000-15000
 	    }
 
-	    print_sched();
+	    print_sched(i);
             exit(0); // important line, exiting child process
         } else {
             ;

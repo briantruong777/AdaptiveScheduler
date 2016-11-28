@@ -13,7 +13,7 @@ long get_nanos(void) {
     return ts.tv_nsec;	
 }
 
-void print_sched() {
+void print_sched(int i) {
     char path[50], buff[255], out[255] ="";
     const char s[2] = " ";
     sprintf(path, "/proc/%d/sched", getpid());
@@ -35,7 +35,7 @@ void print_sched() {
 	}
     }
     out[strlen(out)-2] = '\0';
-    printf("%d, %d, %s\n", getpid(), sched_getscheduler(0), out); 
+    printf("%d, %d, %d, %s\n", i, getpid(), sched_getscheduler(0), out); 
     fclose(fp);
     return;
 }
@@ -95,10 +95,10 @@ int main(int argc, char *argv[]) {
 	    if (rand() % 100 >= atoi(argv[2])) {
             	fibonacci(i, (rand() % 50 + 100)); //100-150
 	    } else {
-		bubblesort(i, (rand() % 10000 + 5000)); //25000-35000
+		bubblesort(i, (rand() % 5000 + 10000)); //10000-15000
 	    }
 
-	    print_sched();
+	    print_sched(i);
             exit(0); // important line, exiting child process
         } else {
             ;
