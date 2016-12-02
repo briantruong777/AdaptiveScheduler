@@ -7424,11 +7424,10 @@ ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
 
 	pr_warn("adaptive proc: received read()\n");
 
-	if (hash_empty(adaptive_processes) || *ppos) {
+	if (*ppos) {
 		pr_warn("adaptive proc: finished read()\n");
 		return 0;
 	}
-
 	size_left = size;
 	hash_for_each(adaptive_processes, bkt, adpt_proc, hash_node) {
 		// Get stats about pid
@@ -7464,13 +7463,32 @@ ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
 		user_buf += buf_len;
 		size_left -= buf_len;
 	}
+	hash_for_each(adaptive_processes_stats, bkt, adpt_proc, hash_node) {
+		buf_len = scnprintf(
+		    buf, sizeof(buf), "%.*s last_utime:%lu last_stime:%lu\n",
+		    (int)sizeof(adpt_proc->exec_name), adpt_proc->exec_name,
+		    adpt_proc->last_utime, adpt_proc->last_stime);
+		if (buf_len > size_left) {
+			pr_warn("adaptive proc: user read() does not have enough space\n");
+			return *ppos = size - size_left;
+		}
+		user_bytes_left = copy_to_user(user_buf, buf, buf_len);
+		if (user_bytes_left) {
+			pr_warn("adaptive proc: copy_to_user failed\n");
+			return *ppos = size - size_left +
+				       (buf_len - user_bytes_left);
+		}
+		user_buf += buf_len;
+		size_left -= buf_len;
+	}
+
 	return *ppos = size - size_left;
 }
 
 ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 			    size_t size, loff_t *ppos)
 {
-	char local_buf[4096] = {0};
+	char local_buf[256] = {0};
 	size_t bytes_left, bytes_read;
 	int pid, err, exec_name_hash;
 	struct adaptive_process *adpt_proc, *old_adpt_proc;
