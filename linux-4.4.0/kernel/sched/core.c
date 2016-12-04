@@ -7610,7 +7610,7 @@ static const struct file_operations adaptive_proc_fops = {
 // Initializes adaptive stuff. Needs to happen after /proc setup.
 void __init adaptive_init(void)
 {
-	if (proc_create("adaptive", 0, NULL, &adaptive_proc_fops)) {
+	if (proc_create("adaptive", 0666, NULL, &adaptive_proc_fops)) {
 		pr_warn("adaptive proc: create success\n");
 	} else {
 		pr_warn("adaptive proc: create fail\n");
