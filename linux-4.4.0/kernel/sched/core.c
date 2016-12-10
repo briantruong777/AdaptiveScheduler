@@ -3083,6 +3083,7 @@ struct adaptive_process {
 
 	cputime_t last_utime;
 	cputime_t last_stime;
+	u64 sum_exec_runtime
 };
 
 
@@ -7465,9 +7466,9 @@ ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
 	}
 	hash_for_each(adaptive_processes_stats, bkt, adpt_proc, hash_node) {
 		buf_len = scnprintf(
-		    buf, sizeof(buf), "%.*s last_utime:%lu last_stime:%lu\n",
+		    buf, sizeof(buf), "%.*s sum_exec_runtime:%lu last_utime:%lu last_stime:%lu\n",
 		    (int)sizeof(adpt_proc->exec_name), adpt_proc->exec_name,
-		    adpt_proc->last_utime, adpt_proc->last_stime);
+		    adpt_proc->sum_exec_runtime, adpt_proc->last_utime, adpt_proc->last_stime);
 		if (buf_len > size_left) {
 			pr_warn("adaptive proc: user read() does not have enough space\n");
 			return *ppos = size - size_left;
@@ -7494,6 +7495,7 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 	struct adaptive_process *adpt_proc, *old_adpt_proc;
 	struct task_struct *task;
 	cputime_t last_utime, last_stime;
+	u64 sum_exec_runtime;
 
 	if (sizeof(local_buf) - 1 < size) {
 		size = sizeof(local_buf) - 1;
@@ -7560,6 +7562,7 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 			rcu_read_unlock();
 			return bytes_read;
 		}
+		sum_exec_runtime = task->se.sum_exec_runtime;
 		last_utime = task->utime;
 		last_stime = task->stime;
 		get_task_comm(local_buf, task);
@@ -7589,6 +7592,7 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 			hash_add(adaptive_processes_stats, &adpt_proc->hash_node, exec_name_hash);
 		}
 		// TODO Do fancier calculations here
+		adpt_proc->sum_exec_runtime = sum_exec_runtime;
 		adpt_proc->last_utime = last_utime;
 		adpt_proc->last_stime = last_stime;
 
