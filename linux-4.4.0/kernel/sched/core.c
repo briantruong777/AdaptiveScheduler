@@ -3083,9 +3083,14 @@ struct adaptive_process {
 
 	cputime_t last_utime;
 	cputime_t last_stime;
-	u64 sum_exec_runtime
+	u64 sum_exec_runtime;
+
+	u64 avg_cpu_burst_time;
 };
 
+// Represents the weighting (as a percent out of 100) to give the newest sample
+// of cpu burst time
+static const u64 ADPT_ALPHA = 20;
 
 /*
  * __schedule() is the main scheduler function.
@@ -7466,9 +7471,10 @@ ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
 	}
 	hash_for_each(adaptive_processes_stats, bkt, adpt_proc, hash_node) {
 		buf_len = scnprintf(
-		    buf, sizeof(buf), "%.*s sum_exec_runtime:%lu last_utime:%lu last_stime:%lu\n",
+		    buf, sizeof(buf), "%.*s avg_cpu_burst_time:%llu sum_exec_runtime:%llu last_utime:%lu last_stime:%lu\n",
 		    (int)sizeof(adpt_proc->exec_name), adpt_proc->exec_name,
-		    adpt_proc->sum_exec_runtime, adpt_proc->last_utime, adpt_proc->last_stime);
+		    adpt_proc->avg_cpu_burst_time, adpt_proc->sum_exec_runtime,
+		    adpt_proc->last_utime, adpt_proc->last_stime);
 		if (buf_len > size_left) {
 			pr_warn("adaptive proc: user read() does not have enough space\n");
 			return *ppos = size - size_left;
@@ -7590,12 +7596,16 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 			adpt_proc->exec_name_hash = exec_name_hash;
 			strncpy(adpt_proc->exec_name, local_buf, sizeof(adpt_proc->exec_name));
 			hash_add(adaptive_processes_stats, &adpt_proc->hash_node, exec_name_hash);
+
+			// Need to set this now to keep avg accurate
+			adpt_proc->avg_cpu_burst_time = sum_exec_runtime;
 		}
-		// TODO Do fancier calculations here
 		adpt_proc->sum_exec_runtime = sum_exec_runtime;
 		adpt_proc->last_utime = last_utime;
 		adpt_proc->last_stime = last_stime;
-
+		adpt_proc->avg_cpu_burst_time =
+		    (ADPT_ALPHA * sum_exec_runtime +
+		     (100 - ADPT_ALPHA) * adpt_proc->avg_cpu_burst_time) / 100;
 		break;
 	}
 	default:
