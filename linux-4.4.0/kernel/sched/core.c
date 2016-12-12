@@ -3091,6 +3091,12 @@ struct adaptive_process {
 // Represents the weighting (as a percent out of 100) to give the newest sample
 // of cpu burst time
 static const u64 ADPT_ALPHA = 20;
+// Represents the cpu burst time boundary between short proccesses and normal
+// processes.
+static u64 adpt_short_process_cpu_time = 2000000;
+// Represents the cpu burst time boundary between normal proccesses and batch
+// processes.
+static u64 adpt_batch_process_cpu_time = 10000000;
 
 /*
  * __schedule() is the main scheduler function.
@@ -3133,11 +3139,11 @@ static const u64 ADPT_ALPHA = 20;
  */
 static void __sched notrace __schedule(bool preempt)
 {
-	static const struct sched_param sched_param = {.sched_priority = 0};
+	struct sched_param sched_param = {.sched_priority = 0};
 	struct task_struct *prev, *next;
 	unsigned long *switch_count;
 	struct rq *rq;
-	int cpu, err;
+	int cpu, err, policy;
 	struct adaptive_process *adpt_proc;
 
 	cpu = smp_processor_id();
@@ -3223,9 +3229,24 @@ static void __sched notrace __schedule(bool preempt)
 	rcu_read_lock();
 	hash_for_each_possible(adaptive_processes, adpt_proc, hash_node, next->pid) {
 		if (adpt_proc->pid == next->pid) {
-			if ((err = sched_setscheduler(next, SCHED_BATCH, &sched_param))) {
+			if (adpt_proc->avg_cpu_burst_time <= adpt_short_process_cpu_time) {
+				policy = SCHED_RR;
+				sched_param.sched_priority = 1;
+			} else if (adpt_proc->avg_cpu_burst_time < adpt_batch_process_cpu_time) {
+				policy = SCHED_NORMAL;
+				sched_param.sched_priority = 0;
+			} else {
+				policy = SCHED_BATCH;
+				sched_param.sched_priority = 0;
+			}
+			if (next->policy == policy)
+				break;
+			if ((err = sched_setscheduler(next, policy, &sched_param))) {
 				pr_warn("adaptive: sched_setscheduler failed, err %d\n", err);
 			}
+			pr_warn(
+			    "adaptive: pid %d changed scheduler policy to %d\n",
+			    next->pid, policy);
 			break;
 		}
 	}
@@ -7489,6 +7510,22 @@ ssize_t adaptive_proc_read(struct file *filp, char __user *user_buf,
 		size_left -= buf_len;
 	}
 
+	// Write back current dynamic scheduler parameter values
+	buf_len = scnprintf(buf, sizeof(buf),
+	    "adapt sched params: adpt_short_process_cpu_time:%llu adpt_batch_process_cpu_time:%llu\n",
+	    adpt_short_process_cpu_time, adpt_batch_process_cpu_time);
+	if (buf_len > size_left) {
+		pr_warn("adaptive proc: user read() does not have enough space\n");
+		return *ppos = size - size_left;
+	}
+	user_bytes_left = copy_to_user(user_buf, buf, buf_len);
+	if (user_bytes_left) {
+		pr_warn("adaptive proc: copy_to_user failed\n");
+		return *ppos = size - size_left + (buf_len - user_bytes_left);
+	}
+	user_buf += buf_len;
+	size_left -= buf_len;
+
 	return *ppos = size - size_left;
 }
 
@@ -7501,7 +7538,7 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 	struct adaptive_process *adpt_proc, *old_adpt_proc;
 	struct task_struct *task;
 	cputime_t last_utime, last_stime;
-	u64 sum_exec_runtime;
+	u64 sum_exec_runtime, value;
 
 	if (sizeof(local_buf) - 1 < size) {
 		size = sizeof(local_buf) - 1;
@@ -7517,7 +7554,7 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 	switch (local_buf[0]) {
 	// Register process
 	// format: 'r:<pid>'
-	case 'r': {
+	case 'r':
 		pid = -1;
 		if ((err = kstrtoint(local_buf + 2, 10, &pid))) {
 			pr_warn("adaptive proc: unable to parse pid, kstrtoint() == %d\n", err);
@@ -7535,13 +7572,38 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 			return bytes_read;
 		}
 		adpt_proc->pid = pid;
-		hash_add(adaptive_processes, &adpt_proc->hash_node, pid);
+		rcu_read_lock();
+		task = find_process_by_pid(pid);
+		if (!task) {
+			pr_warn("adaptive proc: couldn't find task_struct for pid %d\n", pid);
+			kfree(adpt_proc);
+			rcu_read_unlock();
+			return bytes_read;
+		}
+		get_task_comm(adpt_proc->exec_name, task);
+		rcu_read_unlock();
+		adpt_proc->exec_name_hash = hash_exec_name(adpt_proc->exec_name);
+
+		// Go get current stats
+		old_adpt_proc = adpt_proc;
+		adpt_proc = NULL;
+		hash_for_each_possible(adaptive_processes_stats, adpt_proc, hash_node, old_adpt_proc->exec_name_hash) {
+			if (adpt_proc->exec_name_hash == old_adpt_proc->exec_name_hash) {
+				break;
+			}
+		}
+		if (adpt_proc && adpt_proc->exec_name_hash == old_adpt_proc->exec_name_hash) {
+			old_adpt_proc->avg_cpu_burst_time = adpt_proc->avg_cpu_burst_time;
+		} else {
+			// Couldn't find stats so just set to relatively safe value
+			old_adpt_proc->avg_cpu_burst_time = adpt_short_process_cpu_time + 1;
+		}
+		hash_add(adaptive_processes, &old_adpt_proc->hash_node, pid);
 		pr_warn("adaptive proc: stored process %d\n", pid);
 		break;
-	}
 	// Unregister process
 	// format: `u:<pid>
-	case 'u': {
+	case 'u':
 		pid = -1;
 		if ((err = kstrtoint(local_buf + 2, 10, &pid))) {
 			pr_warn("adaptive proc: unable to parse pid, kstrtoint() == %d\n", err);
@@ -7607,7 +7669,34 @@ ssize_t adaptive_proc_write(struct file *filp, const char __user *buf,
 		    (ADPT_ALPHA * sum_exec_runtime +
 		     (100 - ADPT_ALPHA) * adpt_proc->avg_cpu_burst_time) / 100;
 		break;
-	}
+	// Set parameters for dynamic scheduler
+	// format: `sx:<value>` where x is a char representing parameter to set
+	case 's':
+		value = 0;
+		if ((err = kstrtoull(local_buf + 3, 10, &value))) {
+			pr_warn("adaptive proc: unable to parse value, kstrtoull() == %d\n", err);
+			return bytes_read;
+		}
+		switch (local_buf[1]) {
+			// Set the short process cpu burst time boundary. The
+			// maximum cpu burst time to be considered a short
+			// process.
+			case 's':
+				adpt_short_process_cpu_time = value;
+				pr_warn("adaptive proc: adpt_short_process_cpu_time changed to %llu\n", adpt_short_process_cpu_time);
+				break;
+			// Set the batch process cpu burst time boundary. The
+			// minimum cpu burst time to be considered a batch
+			// process.
+			case 'b':
+				adpt_batch_process_cpu_time = value;
+				pr_warn("adaptive proc: adpt_batch_process_cpu_time changed to %llu\n", adpt_batch_process_cpu_time);
+				break;
+			default:
+				pr_warn("adaptive proc: unrecognized parameter %c\n", local_buf[1]);
+				break;
+		}
+		break;
 	default:
 		pr_warn("adaptive proc: unrecognized command\n");
 		break;
